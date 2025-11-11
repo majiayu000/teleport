@@ -2422,6 +2422,7 @@ func (process *TeleportProcess) initAuthService() error {
 			Identity:                    cfg.Identity,
 			Access:                      cfg.Access,
 			StaticTokens:                cfg.Auth.StaticTokens,
+			StaticScopedTokens:          cfg.Auth.StaticScopedTokens,
 			Roles:                       cfg.Auth.Roles,
 			AuthPreference:              cfg.Auth.Preference,
 			OIDCConnectors:              cfg.OIDCConnectors,
