@@ -19,7 +19,7 @@
 import { arrayBufferToBase64 } from 'shared/utils/base64';
 import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdp_pb'
 import { IMessageType, readMessageOption } from "@protobuf-ts/runtime";
-import { MFAAuthenticateChallenge } from 'gen-proto-ts/teleport/legacy/client/proto/authservice_pb';
+import { AuthenticateChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
 
 export type Message = ArrayBufferLike;
 
@@ -534,7 +534,7 @@ export class TdpbCodec extends Encoder {
         if (mfaType !== 'n' && mfaType !== 'u') {
           throw new Error(`invalid mfa type ${mfaType}, should be "n" or "u"`);
         }
-        const jsn = MFAAuthenticateChallenge.toJson(mfa.challenge);
+        const jsn = AuthenticateChallenge.toJson(mfa.challenge);
         this.handlers.handleMfaChallenge({ mfaType, jsonString: jsn.toString() })
         break;
       case tdpb.MessageType.SHARED_DIRECTORY_ACKNOWLEDGE:
