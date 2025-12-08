@@ -509,9 +509,8 @@ export class TdpbCodec extends Encoder {
           data: data,
         };
 
-        // TODO: Figure out why I had to do this
         let load: (pngFrame: PngFrame) => any =
-          (theFrame: PngFrame) => this.handlers.handlePngFrame(theFrame);
+          (frame: PngFrame) => this.handlers.handlePngFrame(frame);
         data.onload = load(png);
         break;
       case tdpb.MessageType.FASTPATH_PDU:
@@ -520,7 +519,6 @@ export class TdpbCodec extends Encoder {
         );
         break;
       case tdpb.MessageType.ALERT:
-        // TODO: Go back and fix this typo in the protos
         let { message, severity } = tdpb.Alert.fromBinary(messageData);
         this.handlers.handleTdpAlert({ message, severity: severity.valueOf() })
         break;
@@ -531,8 +529,9 @@ export class TdpbCodec extends Encoder {
       case tdpb.MessageType.MFA:
         const mfa = tdpb.MFA.fromBinary(messageData);
         const mfaType = mfa.type.toString()
-        if (mfaType !== 'n' && mfaType !== 'u') {
-          throw new Error(`invalid mfa type ${mfaType}, should be "n" or "u"`);
+        // Only support WebAuthn and SSO MFA
+        if (mfaType !== 'n') {
+          throw new Error(`Invalid mfa type. Only WebAuthn or SSO MFA are supported."`);
         }
         const jsn = AuthenticateChallenge.toJson(mfa.challenge);
         this.handlers.handleMfaChallenge({ mfaType, jsonString: jsn.toString() })
