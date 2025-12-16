@@ -77,7 +77,7 @@ import {
 } from './sharedDirectoryAccess';
 import { isThisQuarter } from 'date-fns';
 import { server } from 'design/ResourceIcon/icons';
-//import { SharedDirectoryAcknowledge } from 'gen-proto-ts/teleport/desktop/tdp_pb';
+//import { SharedDirectoryAcknowledge } from 'gen-proto-ts/teleport/desktop/tdpb_pb';
 
 export enum TdpClientEvent {
   TDP_CLIENT_SCREEN_SPEC = 'tdp client screen spec',
@@ -639,7 +639,7 @@ export class TdpClient extends EventEmitter<EventMap> {
       req.writeData
     );
 
-    this.sendSharedDirectoryWriteResponse({
+  this.sendSharedDirectoryWriteResponse({
       completionId: req.completionId,
       errCode: SharedDirectoryErrCode.Nil,
       bytesWritten,
@@ -760,10 +760,7 @@ export class TdpClient extends EventEmitter<EventMap> {
       token: string;
     };
   }) {
-    const msg = this.codec.encodeMfaJson({
-      mfaType: 'n',
-      jsonString: JSON.stringify(data),
-    });
+    const msg = this.codec.encodeMfaJson(data);
     this.send(msg);
   }
 

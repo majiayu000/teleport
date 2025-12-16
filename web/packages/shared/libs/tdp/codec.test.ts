@@ -46,7 +46,7 @@ import {
   MouseButtonState,
 }from './codec';
 
-import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdp_pb'
+import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdpb_pb'
 
 const mockHandlers: ClientEventHandlers = {
   handleClipboardData(data: ClipboardData): void {},

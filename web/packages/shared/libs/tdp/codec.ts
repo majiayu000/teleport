@@ -17,9 +17,14 @@
  */
 
 import { arrayBufferToBase64 } from 'shared/utils/base64';
-import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdp_pb'
+import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdpb_pb'
 import { IMessageType, readMessageOption } from "@protobuf-ts/runtime";
-import { AuthenticateChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
+import { AuthenticateChallenge, AuthenticateResponse, SSOChallengeResponse, SSOChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
+import { Webauthn } from 'teleport/Login/Login.story';
+import { CredentialAssertionResponse, CredentialDescriptor, } from 'gen-proto-ts/teleport/legacy/types/webauthn/webauthn_pb';
+import { channel } from 'diagnostics_channel';
+import { MfaAuthenticateChallengeJson, SsoChallenge as mfaSsoChallenge } from 'teleport/services/mfa';
+import { base64urlToBuffer, bufferToBase64url } from 'shared/utils/base64';
 
 export type Message = ArrayBufferLike;
 
@@ -362,6 +367,28 @@ export type ClientHello = {
   screenSpec: ClientScreenSpec
 };
 
+export type MFAResponse = {
+  totp_code?: string;
+  webauthn_response?: {
+    id: string;
+    type: string;
+    extensions: {
+      appid: boolean;
+    };
+    rawId: string;
+    response: {
+      authenticatorData: string;
+      clientDataJSON: string;
+      signature: string;
+      userHandle: string;
+    };
+  };
+  sso_response?: {
+    requestId: string;
+    token: string;
+  };
+}
+
 function toSharedDirectoryErrCode(errCode: number): SharedDirectoryErrCode {
   if (!(errCode in SharedDirectoryErrCode)) {
     throw new Error(`attempted to convert invalid error code ${errCode}`);
@@ -404,7 +431,7 @@ export abstract class Encoder {
   abstract encodeKeyboardInput(code: string, state: ButtonState): Message[];
   abstract encodeMouseWheelScroll(axis: ScrollAxis, delta: number): Message;
   abstract encodeClientScreenSpec(spec: ClientScreenSpec): Message;
-  abstract encodeMfaJson(mfaJson: MfaJson): Message;
+  abstract encodeMfaJson(mfaJson: MFAResponse): Message;
   abstract encodeSharedDirectoryInfoResponse(res: SharedDirectoryInfoResponse): Message;
   abstract encodeSharedDirectoryReadResponse(res: SharedDirectoryReadResponse): Message;
   abstract encodeSharedDirectoryMoveResponse(res: SharedDirectoryMoveResponse): Message;
@@ -464,7 +491,7 @@ export class TdpbCodec extends Encoder {
     // This seems like a bug in code generation. Our 'MessageType' (proto) enum has values:
     // MESSAGE_TYPE_FOO, MESSAGE_TYPE_BAR, etc. The message type option contains the full
     // 'MESSAGE_TYPE_' prefix, but the generated enums drop this prefix. In order to convert
-    // out option to a message type, we have to trim the string.
+    // our option to a message type, we have to trim the string.
     const prefix = "MESSAGE_TYPE_";
     if (opt.startsWith(prefix)) {
       opt = opt.substring(prefix.length);
@@ -520,7 +547,7 @@ export class TdpbCodec extends Encoder {
         break;
       case tdpb.MessageType.ALERT:
         let { message, severity } = tdpb.Alert.fromBinary(messageData);
-        this.handlers.handleTdpAlert({ message, severity: severity.valueOf() })
+        this.handlers.handleTdpAlert({ message, severity: severity.valueOf() -1})
         break;
       case tdpb.MessageType.CLIPBOARD_DATA:
         const clipboardData = tdpb.ClipboardData.fromBinary(messageData).data;
@@ -528,13 +555,37 @@ export class TdpbCodec extends Encoder {
         break;
       case tdpb.MessageType.MFA:
         const mfa = tdpb.MFA.fromBinary(messageData);
-        const mfaType = mfa.type.toString()
-        // Only support WebAuthn and SSO MFA
-        if (mfaType !== 'n') {
-          throw new Error(`Invalid mfa type. Only WebAuthn or SSO MFA are supported."`);
+        let challenge: MfaAuthenticateChallengeJson | undefined;
+
+        if (mfa.challenge) {
+          if (mfa.challenge.webauthnChallenge) {
+            const webauthn = mfa.challenge.webauthnChallenge;
+            challenge = {
+              webauthn_challenge: {
+                publicKey: {
+                  challenge: webauthn.publicKey.challenge.toBase64(),
+                  //challenge: this.decoder.decode(webauthn.publicKey.challenge),
+                  rpId: webauthn.publicKey.rpId,
+                  timeout: Number(webauthn.publicKey.timeoutMs),
+                  userVerification: webauthn.publicKey.userVerification,
+                  extensions: webauthn.publicKey.userVerification,
+                  allowCredentials: webauthn.publicKey.allowCredentials.map((cred, _): PublicKeyCredentialDescriptorJSON => {
+                    return {
+                      id: cred.id.toBase64(),
+                      type: cred.type,
+                    }
+                  }),
+                }
+              }
+            }
+          } else if (mfa.challenge.ssoChallenge) {
+            challenge = {sso_challenge: this.toMfaSsoChallenge(mfa.challenge?.ssoChallenge, mfa.channelId)}
+          } else {
+            throw new Error("MFA challenge must use Webauthn or SSO")
+          }
+          console.log("challenge: " + JSON.stringify(challenge))
+          this.handlers.handleMfaChallenge({ mfaType: 'n', jsonString: JSON.stringify(challenge) })
         }
-        const jsn = AuthenticateChallenge.toJson(mfa.challenge);
-        this.handlers.handleMfaChallenge({ mfaType, jsonString: jsn.toString() })
         break;
       case tdpb.MessageType.SHARED_DIRECTORY_ACKNOWLEDGE:
         {
@@ -594,8 +645,36 @@ export class TdpbCodec extends Encoder {
             throw new Error(`unknown shared directory operation, ${req.operationCode}`)
         }
         break;
+      case tdpb.MessageType.LATENCY_STATS:
+        const stats = tdpb.LatencyStats.fromBinary(messageData);
+        this.handlers.handleLatencyStats({ client: stats.clientLatency, server: stats.serverLatency });
+        break;
       default:
         throw new Error(`received unsupported message type", ${messageType}`)
+    }
+  }
+
+  toMfaSsoChallenge(challenge: SSOChallenge, name: string): mfaSsoChallenge {
+
+    const connectorType = challenge.device?.connectorType
+    switch (connectorType) {
+      case 'oidc':
+      case 'saml':
+      case 'github':
+        break;
+      default:
+        throw new Error("invalid MFA connector type: " + challenge.device?.connectorType)
+    }
+
+    return {
+      channelId: name,
+      redirectUrl: challenge.redirectUrl,
+      requestId: challenge.requestId,
+      device: {
+        connectorId: challenge.device.connectorId,
+        connectorType: connectorType,
+        displayName: challenge.device.displayName,
+      }
     }
   }
 
@@ -619,7 +698,7 @@ export class TdpbCodec extends Encoder {
     return this.marshal({ x, y }, tdpb.MouseMove)
   }
   encodeMouseButton(button: MouseButton, state: ButtonState): Message {
-    return this.marshal({ button, pressed: state == ButtonState.DOWN }, tdpb.MouseButton)
+    return this.marshal({ button: button + 1, pressed: state == ButtonState.DOWN }, tdpb.MouseButton)
   }
 
   encodeKeyboardInput(code: string, state: ButtonState): Message[] {
@@ -653,12 +732,48 @@ export class TdpbCodec extends Encoder {
     return this.marshal({ axis: axis.valueOf() - 1, delta }, tdpb.MouseWheel);
   }
 
-  encodeMfaJson(mfaJson: MfaJson): Message {
-    return null;
+  encodeMfaJson(mfaJson: MFAResponse): Message {
+    if (mfaJson.webauthn_response) {
+      console.log("webauthn:clientDataJson " + mfaJson.webauthn_response.response.clientDataJSON)
+      const response = AuthenticateResponse.create({
+        name: "", response: {
+          oneofKind: "webauthn",
+          webauthn: {
+            type: mfaJson.webauthn_response.type,
+            // The MFA emitter base64 url encodes the buffers returned by webauthn APIs.
+            // We unfortunately need to reverse that by decoding back to raw buffers.
+            rawId: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.rawId)),
+            response: {
+              userHandle: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.userHandle)),
+              clientDataJson: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.clientDataJSON)),
+              authenticatorData: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.authenticatorData)),
+              signature: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.signature)),
+
+            },
+            extensions: {
+              appId: mfaJson.webauthn_response.extensions.appid,
+            }
+          }
+        }
+      });
+
+      return this.marshal(tdpb.MFA.create({ authenticationResponse: response }), tdpb.MFA)
+    } else if (mfaJson.sso_response) {
+      const response = AuthenticateResponse.create({
+        name: "", response: {
+          oneofKind: "sso",
+          sso: mfaJson.sso_response
+        }
+      });
+      return this.marshal(tdpb.MFA.create({ authenticationResponse: response }), tdpb.MFA)
+    }
+
+    throw new Error("Invalid MFA response. Must be Webauthn or SSO")
   }
 
   encodeSharedDirectoryInfoResponse(res: SharedDirectoryInfoResponse): Message {
     return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.INFO,
       completionId: res.completionId,
       errorCode: res.errCode,
       fsoList: [res.fso],
@@ -667,6 +782,7 @@ export class TdpbCodec extends Encoder {
 
   encodeSharedDirectoryReadResponse(res: SharedDirectoryReadResponse): Message {
     return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.READ,
       completionId: res.completionId,
       errorCode: res.errCode,
       data: res.readData,
@@ -675,6 +791,7 @@ export class TdpbCodec extends Encoder {
 
   encodeSharedDirectoryMoveResponse(res: SharedDirectoryMoveResponse): Message {
     return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.MOVE,
       completionId: res.completionId,
       errorCode: res.errCode,
     }), tdpb.SharedDirectoryResponse);
@@ -682,6 +799,7 @@ export class TdpbCodec extends Encoder {
 
   encodeSharedDirectoryListResponse(res: SharedDirectoryListResponse): Message {
     return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.LIST,
       completionId: res.completionId,
       errorCode: res.errCode,
       fsoList: res.fsoList
@@ -690,23 +808,37 @@ export class TdpbCodec extends Encoder {
 
 
   encodeSharedDirectoryAnnounce(announce: SharedDirectoryAnnounce): Message {
-    return null;
+    return this.marshal(announce, tdpb.SharedDirectoryAnnounce);
   }
 
   encodeSharedDirectoryCreateResponse(resp: SharedDirectoryCreateResponse): Message {
-    return null;
+    return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.CREATE,
+      completionId: resp.completionId,
+      errorCode: resp.errCode,
+      fsoList: new Array<tdpb.FileSystemObject>(resp.fso),
+    }), tdpb.SharedDirectoryResponse);
   }
 
   encodeSharedDirectoryDeleteResponse(resp: SharedDirectoryDeleteResponse): Message {
-    return null;
+    return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.DELETE,
+      completionId: resp.completionId,
+      errorCode: resp.errCode,
+    }), tdpb.SharedDirectoryResponse);
   }
 
   encodeSharedDirectoryWriteResponse(resp: SharedDirectoryWriteResponse): Message {
-    return null;
+    return this.marshal(tdpb.SharedDirectoryResponse.create({
+      operationCode: tdpb.DirectoryOperation.WRITE,
+      completionId: resp.completionId,
+      errorCode: resp.errCode,
+      bytesWritten: resp.bytesWritten,
+    }), tdpb.SharedDirectoryResponse);
   }
 
   encodeSharedDirectoryTruncateResponse(resp: SharedDirectoryTruncateResponse): Message {
-    return null;
+    return this.marshal(tdpb.SharedDirectoryResponse.create({ operationCode: tdpb.DirectoryOperation.TRUNCATE, ...resp }), tdpb.SharedDirectoryResponse);
   }
 
   encodeClientHello(hello: ClientHello): Message {
@@ -817,7 +949,7 @@ export class TdpCodec extends Encoder {
   }
 
   decodeTdpbUpgrade(buffer: ArrayBufferLike): TdpbUpgrade {
-    const version = new DataView(buffer).getUint32(1);
+    const version = new DataView(buffer).getUint8(1);
     return { version };
   }
 
@@ -832,7 +964,7 @@ export class TdpCodec extends Encoder {
 
     let buttonNum;
     if (buttonNum = isMouseButton(view.getUint8(1))) {
-        return {
+      return {
         button: buttonNum,
         state: view.getUint8(2),
       };
@@ -1002,8 +1134,8 @@ export class TdpCodec extends Encoder {
   }
 
   // | message type (10) | mfa_type byte | message_length uint32 | json []byte
-  encodeMfaJson(mfaJson: MfaJson): Message {
-    const dataUtf8array = this.encoder.encode(mfaJson.jsonString);
+  encodeMfaJson(mfaJson: MFAResponse): Message {
+    const dataUtf8array = this.encoder.encode(JSON.stringify(mfaJson));
 
     const bufLen = BYTE_LEN + BYTE_LEN + UINT_32_LEN + dataUtf8array.length;
     const buffer = new ArrayBuffer(bufLen);
@@ -1011,7 +1143,7 @@ export class TdpCodec extends Encoder {
     let offset = 0;
 
     view.setUint8(offset++, MessageType.MFA_JSON);
-    view.setUint8(offset++, mfaJson.mfaType.charCodeAt(0));
+    view.setUint8(offset++, 'n'.charCodeAt(0));
     view.setUint32(offset, dataUtf8array.length);
     offset += UINT_32_LEN;
     dataUtf8array.forEach(byte => {
@@ -1827,3 +1959,30 @@ const KEY_SCANCODES: { [key: string]: number[] } = {
   LaunchMail: [0xe06c],
   MediaSelect: [0xe06d],
 };
+
+function base64ToArrayBuffer(base64: string): Uint8Array<ArrayBuffer> {
+  let b = new Buffer(base64)
+  return new Uint8Array(b)
+  //var binaryString = atob(base64);
+  //var bytes = new Uint8Array(binaryString.length);
+  //for (var i = 0; i < binaryString.length; i++) {
+  //    bytes[i] = binaryString.charCodeAt(i);
+  //}
+  //return bytes;
+}
+
+function base64UrlToUint8Array(base64Url: string): Uint8Array {
+  // Convert base64url → base64
+  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    .padEnd(Math.ceil(base64Url.length / 4) * 4, '=');
+
+  // Decode base64 → bytes
+  const binary = atob(base64);
+
+  // Convert binary string → Uint8Array
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}

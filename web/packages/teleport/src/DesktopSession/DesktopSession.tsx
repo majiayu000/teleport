@@ -58,7 +58,7 @@ export function DesktopSession() {
                 .replace(':desktopName', desktopName)
                 .replace(':username', username)
                 // TODO: Should this probably be a constant
-                .replace(':version', "1.0")
+                .replace(':version', "teleport-tdpb-1.0")
             ),
             abortSignal
           ),
