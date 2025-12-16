@@ -338,6 +338,14 @@ func collectIntegrationStats(ctx context.Context, req collectIntegrationStatsReq
 	}
 	ret.Integration = uiIg
 
+	if req.integration != nil {
+		if val, ok := req.integration.GetLabel(types.CreatedByIaCLabel); ok && val == "terraform" {
+			ret.IsManagedByTerraform = true
+		}
+	}
+
+	req.integration.GetLabel(types.CreatedByIaCLabel)
+
 	var nextPage string
 	for {
 		filters := &usertasksv1.ListUserTasksFilters{
@@ -348,6 +356,7 @@ func collectIntegrationStats(ctx context.Context, req collectIntegrationStatsReq
 		if err != nil {
 			return nil, err
 		}
+		ret.UserTasks = append(ret.UserTasks, ui.MakeUserTasks(userTasks)...)
 
 		ret.UnresolvedUserTasks += len(userTasks)
 
