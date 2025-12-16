@@ -546,6 +546,17 @@ func (s *Server) GetLockWatcher() *services.LockWatcher {
 	return s.lockWatcher
 }
 
+// ChildLogConfig returns a noop log configuration since the forwarding server
+// does not spawn child processes.
+func (s *Server) ChildLogConfig() srv.ChildLogConfig {
+	return srv.ChildLogConfig{
+		ExecLogConfig: srv.ExecLogConfig{
+			Level: &slog.LevelVar{},
+		},
+		Writer: io.Discard,
+	}
+}
+
 func (s *Server) Serve() {
 	var (
 		succeeded bool
@@ -614,7 +625,10 @@ func (s *Server) Serve() {
 	if s.targetServer.IsOpenSSHNode() {
 		// OpenSSH nodes don't support moderated sessions, send an error to
 		// the user and gracefully fail if the user is attempting to create one.
-		policySets := s.identityContext.UnstableSessionJoiningAccessChecker.SessionPolicySets()
+		var policySets []*types.SessionTrackerPolicySet
+		if s.identityContext.UnstableSessionJoiningAccessChecker != nil {
+			policySets = s.identityContext.UnstableSessionJoiningAccessChecker.SessionPolicySets()
+		}
 		evaluator := moderation.NewSessionAccessEvaluator(policySets, types.SSHSessionKind, s.identityContext.TeleportUser)
 		if evaluator.IsModerated() {
 			s.rejectChannel(chans, "Moderated sessions cannot be created for OpenSSH nodes")
