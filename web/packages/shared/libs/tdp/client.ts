@@ -75,9 +75,6 @@ import {
   SharedDirectoryAccess,
   type FileOrDirInfo,
 } from './sharedDirectoryAccess';
-import { isThisQuarter } from 'date-fns';
-import { server } from 'design/ResourceIcon/icons';
-//import { SharedDirectoryAcknowledge } from 'gen-proto-ts/teleport/desktop/tdpb_pb';
 
 export enum TdpClientEvent {
   TDP_CLIENT_SCREEN_SPEC = 'tdp client screen spec',
@@ -419,19 +416,19 @@ export class TdpClient extends EventEmitter<EventMap> {
     this.emit(TdpClientEvent.TDP_CLIENT_SCREEN_SPEC, spec);
   }
 
-  handleClientScreenSpec(spec: ClientScreenSpec) {
+  handleClientScreenSpec(_spec: ClientScreenSpec) {
     this.logger.warn(
       `received unexpected client screen spec message`
     );
   }
 
-  handleMouseButton(button: MouseButtonState) {
+  handleMouseButton(_button: MouseButtonState) {
     this.logger.warn(
       `received unexpected mouse button message`
     );
   }
 
-  handleMouseMove(move: MouseMove) {
+  handleMouseMove(_move: MouseMove) {
     this.logger.warn(
       `received unexpected mouse move message`
     );
@@ -445,7 +442,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   handleTdpAlert(alert: Alert) {
-    //const alert = this.codec.decodeAlert(buffer);
     // TODO(zmb3): info and warning should use the same handler
     if (alert.severity === Severity.Error) {
       throw new TdpError(alert.message);
@@ -594,7 +590,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   async handleSharedDirectoryDeleteRequest(req: SharedDirectoryDeleteRequest) {
-    //const req = this.codec.decodeSharedDirectoryDeleteRequest(buffer);
     const sharedDirectory = this.getSharedDirectoryOrThrow();
 
     try {
@@ -613,7 +608,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   async handleSharedDirectoryReadRequest(req: SharedDirectoryReadRequest) {
-    //const req = this.codec.decodeSharedDirectoryReadRequest(buffer);
     const sharedDirectory = this.getSharedDirectoryOrThrow();
 
     const readData = await sharedDirectory.read(
@@ -630,7 +624,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   async handleSharedDirectoryWriteRequest(req: SharedDirectoryWriteRequest) {
-    //const req = this.codec.decodeSharedDirectoryWriteRequest(buffer);
     const sharedDirectory = this.getSharedDirectoryOrThrow();
 
     const bytesWritten = await sharedDirectory.write(
@@ -647,7 +640,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   handleSharedDirectoryMoveRequest(req: SharedDirectoryMoveRequest) {
-    //const req = this.codec.decodeSharedDirectoryMoveRequest(buffer);
     // Always send back Failed for now, see https://github.com/gravitational/webapps/issues/1064
     this.sendSharedDirectoryMoveResponse({
       completionId: req.completionId,
@@ -661,7 +653,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   async handleSharedDirectoryListRequest(req: SharedDirectoryListRequest) {
-    //const req = this.codec.decodeSharedDirectoryListRequest(buffer);
     const path = req.path;
     const sharedDirectory = this.getSharedDirectoryOrThrow();
 
@@ -676,7 +667,6 @@ export class TdpClient extends EventEmitter<EventMap> {
   }
 
   async handleSharedDirectoryTruncateRequest(req: SharedDirectoryTruncateRequest) {
-    //const req = this.codec.decodeSharedDirectoryTruncateRequest(buffer);
     const sharedDirectory = this.getSharedDirectoryOrThrow();
 
     await sharedDirectory.truncate(req.path, req.endOfFile);

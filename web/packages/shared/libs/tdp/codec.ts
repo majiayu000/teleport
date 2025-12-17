@@ -367,6 +367,7 @@ export type ClientHello = {
   screenSpec: ClientScreenSpec
 };
 
+// TODO: Replace with MfaChallengeResponse in types.ts
 export type MFAResponse = {
   totp_code?: string;
   webauthn_response?: {
@@ -1959,30 +1960,3 @@ const KEY_SCANCODES: { [key: string]: number[] } = {
   LaunchMail: [0xe06c],
   MediaSelect: [0xe06d],
 };
-
-function base64ToArrayBuffer(base64: string): Uint8Array<ArrayBuffer> {
-  let b = new Buffer(base64)
-  return new Uint8Array(b)
-  //var binaryString = atob(base64);
-  //var bytes = new Uint8Array(binaryString.length);
-  //for (var i = 0; i < binaryString.length; i++) {
-  //    bytes[i] = binaryString.charCodeAt(i);
-  //}
-  //return bytes;
-}
-
-function base64UrlToUint8Array(base64Url: string): Uint8Array {
-  // Convert base64url → base64
-  const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
-    .padEnd(Math.ceil(base64Url.length / 4) * 4, '=');
-
-  // Decode base64 → bytes
-  const binary = atob(base64);
-
-  // Convert binary string → Uint8Array
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
