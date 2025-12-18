@@ -538,14 +538,14 @@ export class TdpbCodec extends Encoder {
             challenge = {
               webauthn_challenge: {
                 publicKey: {
-                  challenge: arrayBufferToBase64(webauthn.publicKey.challenge.buffer),
+                  challenge: btoa(String.fromCharCode(...webauthn.publicKey.challenge)),
                   rpId: webauthn.publicKey.rpId,
                   timeout: Number(webauthn.publicKey.timeoutMs),
                   userVerification: webauthn.publicKey.userVerification,
                   extensions: webauthn.publicKey.extensions,
                   allowCredentials: webauthn.publicKey.allowCredentials.map((cred, _): PublicKeyCredentialDescriptorJSON => {
                     return {
-                      id: arrayBufferToBase64(cred.id.buffer),
+                      id: btoa(String.fromCharCode(...cred.id)),
                       type: cred.type,
                     }
                   }),
@@ -628,7 +628,6 @@ export class TdpbCodec extends Encoder {
   }
 
   toMfaSsoChallenge(challenge: SSOChallenge, name: string): mfaSsoChallenge {
-
     const connectorType = challenge.device?.connectorType
     switch (connectorType) {
       case 'oidc':
