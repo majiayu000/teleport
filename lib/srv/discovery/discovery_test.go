@@ -1736,16 +1736,6 @@ func TestDiscoveryInCloudKube(t *testing.T) {
 			require.ElementsMatch(t, tc.expectedAssumedRoles, mockedClients.STSClient.GetAssumedRoleARNs(), "roles incorrectly assumed")
 			require.ElementsMatch(t, tc.expectedExternalIDs, mockedClients.STSClient.GetAssumedRoleExternalIDs(), "external IDs incorrectly assumed")
 
-			if tc.wantEvents > 0 {
-				require.Eventually(t, func() bool {
-					return reporter.ResourceCreateEventCount() == tc.wantEvents
-				}, time.Second, 100*time.Millisecond)
-			} else {
-				require.Never(t, func() bool {
-					return reporter.ResourceCreateEventCount() != 0
-				}, time.Second, 100*time.Millisecond)
-			}
-
 			// verify usage of integration credentials.
 			for _, matcher := range tc.azureMatchers {
 				require.NotNil(t, discServer.azureClientCache)
@@ -1754,6 +1744,8 @@ func TestDiscoveryInCloudKube(t *testing.T) {
 				})
 				require.NoError(t, err)
 			}
+
+			require.Equal(t, tc.wantEvents, reporter.ResourceCreateEventCount())
 		})
 	}
 }
@@ -2713,16 +2705,6 @@ func TestDiscoveryDatabase(t *testing.T) {
 				require.FailNow(t, "Didn't receive reconcile event after 1s")
 			}
 
-			if tc.wantEvents > 0 {
-				require.Eventually(t, func() bool {
-					return reporter.ResourceCreateEventCount() == tc.wantEvents
-				}, 10*time.Second, 100*time.Millisecond)
-			} else {
-				require.Never(t, func() bool {
-					return reporter.ResourceCreateEventCount() != 0
-				}, 10*time.Second, 100*time.Millisecond)
-			}
-
 			if tc.discoveryConfigStatusCheck != nil {
 				require.EventuallyWithT(t, func(t *assert.CollectT) {
 					fakeClock.Advance(srv.PollInterval * 2)
@@ -2746,6 +2728,8 @@ func TestDiscoveryDatabase(t *testing.T) {
 				})
 				require.NoError(t, err)
 			}
+
+			require.Equal(t, tc.wantEvents, reporter.ResourceCreateEventCount())
 		})
 	}
 }
