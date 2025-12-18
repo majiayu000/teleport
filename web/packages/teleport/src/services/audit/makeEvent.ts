@@ -2444,6 +2444,27 @@ export const formatters: Formatters = {
       return `App authentication using [${app_auth_config}] failed: ${error}`;
     },
   },
+  [eventCodes.VNET_CONFIG_CREATE]: {
+    type: 'vnet_config.create',
+    desc: 'VNet config created',
+    format: ({ user, name }) => {
+      return `User [${user}] created the VNet config [${name}]`;
+    },
+  },
+  [eventCodes.VNET_CONFIG_UPDATE]: {
+    type: 'vnet_config.update',
+    desc: 'VNet config updated',
+    format: ({ user, name }) => {
+      return `User [${user}] updated the VNet config [${name}]`;
+    },
+  },
+  [eventCodes.VNET_CONFIG_DELETE]: {
+    type: 'vnet_config.delete',
+    desc: 'VNet config deleted',
+    format: ({ user, name }) => {
+      return `User [${user}] deleted the VNet config [${name}]`;
+    },
+  },
 };
 
 const unknownFormatter = {
