@@ -19,12 +19,9 @@
 import { arrayBufferToBase64 } from 'shared/utils/base64';
 import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdpb_pb'
 import { IMessageType, readMessageOption } from "@protobuf-ts/runtime";
-import { AuthenticateChallenge, AuthenticateResponse, SSOChallengeResponse, SSOChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
-import { Webauthn } from 'teleport/Login/Login.story';
-import { CredentialAssertionResponse, CredentialDescriptor, } from 'gen-proto-ts/teleport/legacy/types/webauthn/webauthn_pb';
-import { channel } from 'diagnostics_channel';
-import { MfaAuthenticateChallengeJson, SsoChallenge as mfaSsoChallenge } from 'teleport/services/mfa';
-import { base64urlToBuffer, bufferToBase64url } from 'shared/utils/base64';
+import { AuthenticateResponse, SSOChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
+import { MfaAuthenticateChallengeJson, SsoChallenge as mfaSsoChallenge, MfaChallengeResponse } from 'teleport/services/mfa';
+import { base64urlToBuffer } from 'shared/utils/base64';
 
 export type Message = ArrayBufferLike;
 
@@ -367,29 +364,6 @@ export type ClientHello = {
   screenSpec: ClientScreenSpec
 };
 
-// TODO: Replace with MfaChallengeResponse in types.ts
-export type MFAResponse = {
-  totp_code?: string;
-  webauthn_response?: {
-    id: string;
-    type: string;
-    extensions: {
-      appid: boolean;
-    };
-    rawId: string;
-    response: {
-      authenticatorData: string;
-      clientDataJSON: string;
-      signature: string;
-      userHandle: string;
-    };
-  };
-  sso_response?: {
-    requestId: string;
-    token: string;
-  };
-}
-
 function toSharedDirectoryErrCode(errCode: number): SharedDirectoryErrCode {
   if (!(errCode in SharedDirectoryErrCode)) {
     throw new Error(`attempted to convert invalid error code ${errCode}`);
@@ -432,7 +406,7 @@ export abstract class Encoder {
   abstract encodeKeyboardInput(code: string, state: ButtonState): Message[];
   abstract encodeMouseWheelScroll(axis: ScrollAxis, delta: number): Message;
   abstract encodeClientScreenSpec(spec: ClientScreenSpec): Message;
-  abstract encodeMfaJson(mfaJson: MFAResponse): Message;
+  abstract encodeMfaJson(mfaJson: MfaChallengeResponse): Message;
   abstract encodeSharedDirectoryInfoResponse(res: SharedDirectoryInfoResponse): Message;
   abstract encodeSharedDirectoryReadResponse(res: SharedDirectoryReadResponse): Message;
   abstract encodeSharedDirectoryMoveResponse(res: SharedDirectoryMoveResponse): Message;
@@ -564,15 +538,14 @@ export class TdpbCodec extends Encoder {
             challenge = {
               webauthn_challenge: {
                 publicKey: {
-                  challenge: webauthn.publicKey.challenge.toBase64(),
-                  //challenge: this.decoder.decode(webauthn.publicKey.challenge),
+                  challenge: arrayBufferToBase64(webauthn.publicKey.challenge.buffer),
                   rpId: webauthn.publicKey.rpId,
                   timeout: Number(webauthn.publicKey.timeoutMs),
                   userVerification: webauthn.publicKey.userVerification,
-                  extensions: webauthn.publicKey.userVerification,
+                  extensions: webauthn.publicKey.extensions,
                   allowCredentials: webauthn.publicKey.allowCredentials.map((cred, _): PublicKeyCredentialDescriptorJSON => {
                     return {
-                      id: cred.id.toBase64(),
+                      id: arrayBufferToBase64(cred.id.buffer),
                       type: cred.type,
                     }
                   }),
@@ -584,7 +557,6 @@ export class TdpbCodec extends Encoder {
           } else {
             throw new Error("MFA challenge must use Webauthn or SSO")
           }
-          console.log("challenge: " + JSON.stringify(challenge))
           this.handlers.handleMfaChallenge({ mfaType: 'n', jsonString: JSON.stringify(challenge) })
         }
         break;
@@ -643,15 +615,15 @@ export class TdpbCodec extends Encoder {
             await this.handlers.handleSharedDirectoryListRequest(req);
             break;
           default:
-            throw new Error(`unknown shared directory operation, ${req.operationCode}`)
+            console.warn(`received unsupported message type", ${messageType}`)
         }
         break;
       case tdpb.MessageType.LATENCY_STATS:
         const stats = tdpb.LatencyStats.fromBinary(messageData);
-        this.handlers.handleLatencyStats({ client: stats.clientLatency, server: stats.serverLatency });
+        this.handlers.handleLatencyStats({ client: stats.clientLatencyMs, server: stats.serverLatencyMs });
         break;
       default:
-        throw new Error(`received unsupported message type", ${messageType}`)
+        console.warn(`received unsupported message type", ${messageType}`)
     }
   }
 
@@ -733,11 +705,10 @@ export class TdpbCodec extends Encoder {
     return this.marshal({ axis: axis.valueOf() - 1, delta }, tdpb.MouseWheel);
   }
 
-  encodeMfaJson(mfaJson: MFAResponse): Message {
+  encodeMfaJson(mfaJson: MfaChallengeResponse): Message {
     if (mfaJson.webauthn_response) {
-      console.log("webauthn:clientDataJson " + mfaJson.webauthn_response.response.clientDataJSON)
       const response = AuthenticateResponse.create({
-        name: "", response: {
+        response: {
           oneofKind: "webauthn",
           webauthn: {
             type: mfaJson.webauthn_response.type,
@@ -749,7 +720,6 @@ export class TdpbCodec extends Encoder {
               clientDataJson: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.clientDataJSON)),
               authenticatorData: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.authenticatorData)),
               signature: new Uint8Array(base64urlToBuffer(mfaJson.webauthn_response.response.signature)),
-
             },
             extensions: {
               appId: mfaJson.webauthn_response.extensions.appid,
@@ -1135,7 +1105,7 @@ export class TdpCodec extends Encoder {
   }
 
   // | message type (10) | mfa_type byte | message_length uint32 | json []byte
-  encodeMfaJson(mfaJson: MFAResponse): Message {
+  encodeMfaJson(mfaJson: MfaChallengeResponse): Message {
     const dataUtf8array = this.encoder.encode(JSON.stringify(mfaJson));
 
     const bufLen = BYTE_LEN + BYTE_LEN + UINT_32_LEN + dataUtf8array.length;
