@@ -146,9 +146,46 @@ isn't supported for your account."** or similar.
 
 The Security-Kerberos Windows Event Log provides information on smart card-based
 authentication attempts. This Event Log is not enabled by default.
+
 Open the Windows Event Log and navigate to Event Viewer, Application and Services Logs,
 Microsoft, Windows, Security-Kerberos, Operational. Enable this Event Log and attempt
-to connect with Teleport Web UI to review log entries.
+to connect with Teleport to review log entries.
+
+This is often an issue with the KDC certificates on your domain controllers not meeting
+the requirements for smart card logon.
+
+- Ensure that your KDC certificates are either issued with the "Domain
+  Controller" built-in template (when using AD CS), or that they contain the
+  Kerberos Authentication EKU (1.3.6.1.5.2.3.5)
+- Ensure that the issuing CA certificate for the KDC certificates is also present
+  in the NTAuth store of the domain contoller.
+
+### Your credentials could not be verified
+
+You connect to a Windows host from the Teleport UI, land on the Windows login
+screen and see an error message: **Your credentials could not be verified.**
+
+This means that the smart card certificate presented by Teleport could be validated
+by the domain controller.
+
+**Solution:** Review the CAPI2 logs on the domain controller
+
+The Microsoft Crypto API (CAPI) service logs contain information about certificate
+checks performed by domain controllers. This Event Log is not enabled by default.
+
+Open the Windows Event Log and navigate to Event Viewer, Application and
+Services Logs, Microsoft, Windows, CAPI2, Operational. Enable this Event Log and
+attempt to connect with Teleport to review log entries.
+
+Note: The CAPI2 logs can be very verbose. We recommend increasing the max log size to
+at least 4MB and disabling the logs when you complete troubleshooting.
+
+Review the logs, looking for events with an error status and a task category of
+"Build Chain." The details section will contain the username which failed logon.
+When you locate the event(s) corresponding to the user who failed to log in,
+look at the chain elements in order to identify the failure. Possible failures
+here include revoked certificates, certificates that don't chain to a trusted
+root, or failed certificate revocation checks.
 
 ### Smart card certificate not trusted
 
@@ -271,15 +308,20 @@ your own third party certificate. Note that Active Directory is
 [extremely picky](https://docs.microsoft.com/en-us/troubleshoot/windows-server/identity/enable-ldap-over-ssl-3rd-certification-authority#requirements-for-an-ldaps-certificate)
 so take care to generate your certificates correctly.
 
-## Desktops are not discovered via LDAP
+## LDAP bind failures
 
-### LDAP not yet initialized
+Teleport uses LDAP for several purposes:
+1. To (optionally) discover Windows hosts in your Active Directory domain
+2. In order to look up the Windows user's SID prior to starting an RDP session
+3. To periodically publish Teleport CRLs to the domain
 
-Teleport is running, but desktops do not show up in the Web UI. The logs contain
-errors similar to:
+Teleport authenticates to the LDAP server using a client certificate it issues
+for itself. If this mutual TLS connection fails, you will see errors similar to:
 
 ```
-skipping desktop discovery: LDAP not yet initialized
+ERROR: the LDAP server did not accept Teleport's client certificate, has the Teleport CA been imported correctly?,
+LDAP Result Code 1 &#34;Operations Error&#34;: 000004DC: LdapErr: DSID-0C090CE5,
+  comment: In order to perform this operation a successful bind must be completed on the connection., data 0, v4563
 ```
 
 **Solution 1:** Confirm Teleport certificate is installed
@@ -351,7 +393,19 @@ To look up a user's SID, use the following PowerShell command:
 $ Get-AdUser -Identity $USERNAME | Select SID
 ```
 
-#### Manually validate a client certificate
+You should also verify that the service account Teleport is using is enabled and
+not locked out, which sometimes happen when a policy requires that the account
+first performs a password reset.
+
+**Solution 4:** Check for clock drift
+
+An incorrect system clock (on either the Teleport side or in the Windows environment)
+could result in one or both parties failing to accept the other's certificate.
+
+Ensure that the system clocks are accurate. We recommend configuring NTP to
+ensure that clocks don't drift over time.
+
+### Manually validate a client certificate
 
 Another helpful troubleshooting step is to issue a client certificate using
 `tctl` and attempt to validate it on the Windows side.
@@ -434,12 +488,14 @@ failed RDP connection. You may also see errors similar to:
 Rdp(Io(Os { code: 54, kind: ConnectionReset, message: "Connection reset by peer" }))
 ```
 
-**Solution:** Configure a certificate for RDP connections
+**Solution:** Make sure the Windows host uses secure cipher suites
 
-This means that the desktop does not support secure cipher suites for TLS
-connections.
+When the target host forcibly resets the connection, this usually means that the
+desktop does not support secure cipher suites for TLS connections. This issue is
+less common on modern versions of Windows, but is frequently observed on older versions
+such as Windows Server 2012R2.
 
-Make sure that you [configure a certificate for RDP
+You can force the host to use secure cipher suites by [configuring a certificate for RDP
 connections](./active-directory.mdx#step-47-configure-a-certificate-for-rdp-connections).
 
 ### Enhanced RDP security with CredSSP required
