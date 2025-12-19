@@ -105,7 +105,6 @@ import (
 	usagereporter "github.com/gravitational/teleport/lib/usagereporter/teleport"
 	libutils "github.com/gravitational/teleport/lib/utils"
 	"github.com/gravitational/teleport/lib/utils/log/logtest"
-	"github.com/gravitational/teleport/lib/utils/set"
 )
 
 func TestMain(m *testing.M) {
@@ -1679,6 +1678,7 @@ func TestDiscoveryInCloudKube(t *testing.T) {
 				eksClusters: newPopulatedEKSMock().clusters,
 			}
 
+			waitForReconcile := make(chan struct{})
 			discServer, err := New(
 				authz.ContextWithUser(ctx, identity.I),
 				&Config{
@@ -1696,42 +1696,30 @@ func TestDiscoveryInCloudKube(t *testing.T) {
 					Emitter:        authClient,
 					Log:            logger,
 					DiscoveryGroup: mainDiscoveryGroup,
+					onKubernetesClusterReconcile: func() {
+						waitForReconcile <- struct{}{}
+					},
 				})
 			require.NoError(t, err)
 
 			require.NoError(t, discServer.Start())
 			t.Cleanup(discServer.Stop)
 
-			clustersNotUpdatedMap := set.New(tc.clustersNotUpdated...)
-			clustersFoundInAuth := false
-			require.EventuallyWithT(t, func(c *assert.CollectT) {
-			loop:
-				for {
-					select {
-					case cluster := <-clustersNotUpdated:
-						if !clustersNotUpdatedMap.Contains(cluster) {
-							require.Failf(c, "expected Action for cluster %s but got no action from reconciler", cluster)
-						}
-						clustersNotUpdatedMap.Remove(cluster)
-					default:
-						kubeClusters, err := tlsServer.Auth().GetKubernetesClusters(ctx)
-						require.NoError(c, err)
-						if len(kubeClusters) == len(tc.expectedClustersToExistInAuth) {
-							c1 := types.KubeClusters(tc.expectedClustersToExistInAuth).ToMap()
-							c2 := types.KubeClusters(kubeClusters).ToMap()
-							for k := range c1 {
-								if services.CompareResources(c1[k], c2[k]) != services.Equal {
-									require.Equal(c, c1[k], c2[k], "expected no differences")
-								}
-							}
-							clustersFoundInAuth = true
-						}
-						break loop
+			select {
+			case <-waitForReconcile:
+				kubeClusters, err := tlsServer.Auth().GetKubernetesClusters(ctx)
+				require.NoError(t, err)
+
+				c1 := types.KubeClusters(tc.expectedClustersToExistInAuth).ToMap()
+				c2 := types.KubeClusters(kubeClusters).ToMap()
+				for k := range c1 {
+					if services.CompareResources(c1[k], c2[k]) != services.Equal {
+						require.Equal(t, c1[k], c2[k], "expected no differences")
 					}
 				}
-				require.Empty(c, clustersNotUpdated)
-				require.True(c, clustersFoundInAuth)
-			}, 5*time.Second, 200*time.Millisecond)
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "Didn't receive reconcile event after 1s")
+			}
 
 			require.ElementsMatch(t, tc.expectedAssumedRoles, mockedClients.STSClient.GetAssumedRoleARNs(), "roles incorrectly assumed")
 			require.ElementsMatch(t, tc.expectedExternalIDs, mockedClients.STSClient.GetAssumedRoleExternalIDs(), "external IDs incorrectly assumed")
