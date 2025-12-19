@@ -21,6 +21,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type CSSProperties,
 } from 'react';
 import styled, { useTheme } from 'styled-components';
@@ -45,7 +46,7 @@ import {
   RecordingFilters,
   type RecordingFilterOptions,
 } from './RecordingFilters';
-import { RecordingItem, type ActionSlot } from './RecordingItem';
+import { RecordingItem, type RecordingActionProps } from './RecordingItem';
 import { RecordingsPagination } from './RecordingsPagination';
 import type {
   RecordingsListFilterKey,
@@ -57,7 +58,7 @@ import type {
 import { Density, ViewMode, ViewSwitcher } from './ViewSwitcher';
 
 interface RecordingsListProps {
-  actionSlot?: ActionSlot;
+  actionComponent?: ComponentType<RecordingActionProps>;
   onFilterChange: (
     key: RecordingsListFilterKey,
     value: string[] | boolean
@@ -124,7 +125,7 @@ const ScrollContainer = styled.div`
 `;
 
 export function RecordingsList({
-  actionSlot,
+  actionComponent,
   onFilterChange,
   onPageChange,
   onSearchChange,
@@ -234,7 +235,7 @@ export function RecordingsList({
         .slice(startIndex, endIndex)
         .map(recording => (
           <RecordingItem
-            actionSlot={actionSlot}
+            actionComponent={actionComponent}
             key={recording.sid}
             recording={recording}
             thumbnailStyles={thumbnailStyles}
@@ -243,7 +244,7 @@ export function RecordingsList({
           />
         )),
     [
-      actionSlot,
+      actionComponent,
       recordings,
       viewMode,
       density,
