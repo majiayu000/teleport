@@ -30,6 +30,8 @@ type Token interface {
 	// join methods where the name is secret. This should be used when logging
 	// the token name.
 	GetSafeName() string
+	// GetSecret returns the secret of the token.
+	GetSecret() string
 	// GetJoinMethod returns joining method that must be used with this token.
 	GetJoinMethod() types.JoinMethod
 	// GetRoles returns a list of teleport roles that will be granted to the

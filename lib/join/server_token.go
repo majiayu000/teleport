@@ -22,7 +22,6 @@ import (
 	"github.com/gravitational/teleport/lib/join/internal/authz"
 	"github.com/gravitational/teleport/lib/join/internal/messages"
 	"github.com/gravitational/teleport/lib/join/provision"
-	"github.com/gravitational/teleport/lib/scopes/joining"
 )
 
 // handleTokenJoin handles join attempts for the token join method.
@@ -40,12 +39,9 @@ func (s *Server) handleTokenJoin(
 	// Set any diagnostic info from the ClientParams.
 	setDiagnosticClientParams(stream.Diagnostic(), &tokenInit.ClientParams)
 
-	// When using a scoped token, ensure the TokenInit message contains a
-	// matching secret value.
-	if tok, ok := token.(*joining.Token); ok {
-		if tokenInit.Secret != tok.GetScoped().GetStatus().GetSecret() {
-			return nil, trace.BadParameter("invalid token secret")
-		}
+	// make sure the secret provided in the TokenInit matches the token's secret
+	if tokenInit.Secret != token.GetSecret() {
+		return nil, trace.BadParameter("invalid token secret")
 	}
 
 	result, err := s.makeResult(

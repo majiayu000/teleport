@@ -244,7 +244,7 @@ func (t *Token) GetAWSIIDTTL() types.Duration {
 	return types.NewDuration(0)
 }
 
-// GetScoped returns the wrapped [*joiningv1.ScopedToken]
-func (t *Token) GetScoped() *joiningv1.ScopedToken {
-	return t.scoped
+// GetSecret returns the token's secret value.
+func (t *Token) GetSecret() string {
+	return t.scoped.GetStatus().GetSecret()
 }
