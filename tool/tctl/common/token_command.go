@@ -891,16 +891,17 @@ func generateAgentValues(params valueGeneratorParams) ([]byte, error) {
 }
 
 type joinInstructionsInput struct {
-	client     *authclient.Client
-	roles      types.SystemRoles
-	out        io.Writer
-	tokenName  string
-	ttl        time.Duration
-	appName    string
-	appURI     string
-	dbName     string
-	dbURI      string
-	dbProtocol string
+	client      *authclient.Client
+	roles       types.SystemRoles
+	out         io.Writer
+	tokenName   string
+	tokenSecret string
+	ttl         time.Duration
+	appName     string
+	appURI      string
+	dbName      string
+	dbURI       string
+	dbProtocol  string
 }
 
 func showJoinInstructions(ctx context.Context, in joinInstructionsInput) error {
@@ -1035,6 +1036,7 @@ func showJoinInstructions(ctx context.Context, in joinInstructionsInput) error {
 
 		return nodeMessageTemplate.Execute(in.out, map[string]any{
 			"token":       in.tokenName,
+			"secret":      in.tokenSecret,
 			"roles":       strings.ToLower(in.roles.String()),
 			"minutes":     int(in.ttl.Minutes()),
 			"ca_pins":     caPins,
