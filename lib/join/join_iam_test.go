@@ -44,6 +44,7 @@ import (
 	"github.com/gravitational/teleport/lib/auth/authtest"
 	"github.com/gravitational/teleport/lib/auth/join/iam"
 	"github.com/gravitational/teleport/lib/auth/state"
+	"github.com/gravitational/teleport/lib/cloud/awsconfig"
 	"github.com/gravitational/teleport/lib/events"
 	"github.com/gravitational/teleport/lib/join/iamjoin"
 	"github.com/gravitational/teleport/lib/join/joinclient"
@@ -714,7 +715,7 @@ type mockAWSOrganizationsClientGetter struct {
 	OrganizationsAPI iamjoin.OrganizationsAPI
 }
 
-func (m *mockAWSOrganizationsClientGetter) Get(ctx context.Context) (iamjoin.OrganizationsAPI, error) {
+func (m *mockAWSOrganizationsClientGetter) Get(ctx context.Context, integration string, awsOIDCIntegrationClient awsconfig.OIDCIntegrationClient) (iamjoin.OrganizationsAPI, error) {
 	return m.OrganizationsAPI, nil
 }
 

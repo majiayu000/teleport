@@ -113,6 +113,7 @@ import (
 	"github.com/gravitational/teleport/lib/devicetrust/assertserver"
 	dtconfig "github.com/gravitational/teleport/lib/devicetrust/config"
 	"github.com/gravitational/teleport/lib/events"
+	"github.com/gravitational/teleport/lib/integrations/awsoidc"
 	"github.com/gravitational/teleport/lib/integrations/awsra/createsession"
 	"github.com/gravitational/teleport/lib/inventory"
 	iterstream "github.com/gravitational/teleport/lib/itertools/stream"
@@ -581,7 +582,7 @@ func NewServer(cfg *InitConfig, opts ...ServerOption) (as *Server, err error) {
 			return organizations.NewFromConfig(c)
 		}
 
-		cfg.AWSOrganizationsClientGetter, err = awsOrganizationsClientUsingAmbientCredentials(closeCtx, cfg.Clock, organizationsClientFromSDK)
+		cfg.AWSOrganizationsClientGetter, err = awsOrganizationsClientGetter(closeCtx, cfg.Clock, organizationsClientFromSDK)
 		if err != nil {
 			return nil, trace.Wrap(err)
 		}
@@ -898,9 +899,8 @@ func NewServer(cfg *InitConfig, opts ...ServerOption) (as *Server, err error) {
 	return as, nil
 }
 
-// awsOrganizationsClientUsingAmbientCredentials returns an AWS Organizations client getter
-// that uses ambient credentials to create the client.
-func awsOrganizationsClientUsingAmbientCredentials(ctx context.Context, clock clockwork.Clock, organizationsClientFromConfig func(aws.Config) iamjoin.OrganizationsAPI) (iamjoin.OrganizationsAPIGetter, error) {
+// awsOrganizationsClientGetter returns an AWS Organizations client getter.
+func awsOrganizationsClientGetter(ctx context.Context, clock clockwork.Clock, organizationsClientFromConfig func(aws.Config) iamjoin.OrganizationsAPI) (iamjoin.OrganizationsAPIGetter, error) {
 	awsConfigProvider, err := awsconfig.NewCache()
 	if err != nil {
 		return nil, trace.Wrap(err)
@@ -918,31 +918,36 @@ func awsOrganizationsClientUsingAmbientCredentials(ctx context.Context, clock cl
 	}
 	return &organizationsClientGetter{
 		describeAccountAPICache:       describeAccountAPICache,
-		awsConfig:                     awsConfigProvider,
+		awsConfigProvider:             awsConfigProvider,
 		organizationsClientFromConfig: organizationsClientFromConfig,
 	}, nil
 }
 
 type organizationsClientGetter struct {
 	describeAccountAPICache       *utils.FnCache
-	awsConfig                     awsconfig.Provider
+	awsConfigProvider             awsconfig.Provider
 	organizationsClientFromConfig func(aws.Config) iamjoin.OrganizationsAPI
 }
 
-func (o *organizationsClientGetter) Get(ctx context.Context) (iamjoin.OrganizationsAPI, error) {
+func (o *organizationsClientGetter) Get(ctx context.Context, integration string, awsOIDCIntegrationClient awsconfig.OIDCIntegrationClient) (iamjoin.OrganizationsAPI, error) {
 	// For IAM Join flow, the join token might allow instances under an Organization to join the cluster.
 	// In order to validate the organization ID of the joining identity, a call to organizations:DescribeAccount is performed.
 	// This requires AWS credentials to be accessible to the Auth Service.
 	//
 	// Currently, only ambient credentials are supported, which are not available when running within Teleport Cloud.
 	// In that scenario a NotImplemented error is returned.
-	if modules.GetModules().Features().Cloud {
-		return nil, trace.NotImplemented("IAM Joins based on AWS Organization ID are not currently supported in Teleport Cloud")
+	if integration == "" && modules.GetModules().Features().Cloud {
+		return nil, trace.NotImplemented("IAM Joins based on AWS Organization ID require an integration")
 	}
 
 	// Organizations API is global, so we use an empty string for region.
 	const noRegion = ""
-	awsConfig, err := o.awsConfig.GetConfig(ctx, noRegion, awsconfig.WithAmbientCredentials())
+	awsConfig, err := o.awsConfigProvider.GetConfig(ctx, noRegion,
+		awsconfig.WithCredentialsMaybeIntegration(awsconfig.IntegrationMetadata{
+			Name: integration,
+		}),
+		awsconfig.WithOIDCIntegrationClient(awsOIDCIntegrationClient),
+	)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
@@ -1044,15 +1049,15 @@ func (r *Services) GetWebSession(ctx context.Context, req types.GetWebSessionReq
 	return r.Identity.WebSessions().Get(ctx, req)
 }
 
-// GenerateAWSOIDCToken generates a token to be used to execute an AWS OIDC Integration action.
-func (r *Services) GenerateAWSOIDCToken(ctx context.Context, integration string) (string, error) {
-	return r.IntegrationsTokenGenerator.GenerateAWSOIDCToken(ctx, integration)
-}
+// // GenerateAWSOIDCToken generates a token to be used to execute an AWS OIDC Integration action.
+// func (r *Services) GenerateAWSOIDCToken(ctx context.Context, integration string) (string, error) {
+// 	return r.IntegrationsTokenGenerator.GenerateAWSOIDCToken(ctx, integration)
+// }
 
-// GenerateAzureOIDCToken generates a token to be used to execute an Azure OIDC Integration action.
-func (r *Services) GenerateAzureOIDCToken(ctx context.Context, integration string) (string, error) {
-	return r.IntegrationsTokenGenerator.GenerateAzureOIDCToken(ctx, integration)
-}
+// // GenerateAzureOIDCToken generates a token to be used to execute an Azure OIDC Integration action.
+// func (r *Services) GenerateAzureOIDCToken(ctx context.Context, integration string) (string, error) {
+// 	return r.IntegrationsTokenGenerator.GenerateAzureOIDCToken(ctx, integration)
+// }
 
 var (
 	generateRequestsCount = prometheus.NewCounter(
@@ -1730,6 +1735,20 @@ func (a *Server) GetDeviceAssertionServer() CreateDeviceAssertionFunc {
 		}
 	}
 	return a.deviceAssertionServer
+}
+
+// GenerateAWSOIDCToken generates a token to be used to execute an AWS OIDC Integration action.
+func (a *Server) GenerateAWSOIDCToken(ctx context.Context, integration string) (string, error) {
+	token, err := awsoidc.GenerateAWSOIDCToken(ctx, a, a.GetKeyStore(), awsoidc.GenerateAWSOIDCTokenRequest{
+		Integration: integration,
+		Username:    a.ServerID,
+		Subject:     types.IntegrationAWSOIDCSubjectAuth,
+		Clock:       a.clock,
+	})
+	if err != nil {
+		return "", trace.Wrap(err)
+	}
+	return token, nil
 }
 
 func (a *Server) SetCreateDeviceWebTokenFunc(f CreateDeviceWebTokenFunc) {

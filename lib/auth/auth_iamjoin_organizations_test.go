@@ -34,7 +34,7 @@ import (
 	"github.com/gravitational/teleport/lib/modules/modulestest"
 )
 
-func TestAWSOrganizationsClientUsingAmbientCredentials(t *testing.T) {
+func TestAWSOrganizationsClientGetter(t *testing.T) {
 	t.Run("when running in cloud, the client getter returns an error (ambient credentials can't be used in cloud)", func(t *testing.T) {
 		modulestest.SetTestModules(t, modulestest.Modules{
 			TestFeatures: modules.Features{
@@ -42,10 +42,11 @@ func TestAWSOrganizationsClientUsingAmbientCredentials(t *testing.T) {
 			},
 		})
 
-		clientGetter, err := awsOrganizationsClientUsingAmbientCredentials(t.Context(), clockwork.NewFakeClock(), nil)
+		clientGetter, err := awsOrganizationsClientGetter(t.Context(), clockwork.NewFakeClock(), nil)
 		require.NoError(t, err)
 
-		_, err = clientGetter.Get(t.Context())
+		const noIntegration = ""
+		_, err = clientGetter.Get(t.Context(), noIntegration, nil)
 		require.Error(t, err)
 	})
 
@@ -59,12 +60,13 @@ func TestAWSOrganizationsClientUsingAmbientCredentials(t *testing.T) {
 		fakeClock := clockwork.NewFakeClock()
 		mockOrganizationsAPI := &mockOrganizationsAPI{}
 
-		clientGetter, err := awsOrganizationsClientUsingAmbientCredentials(t.Context(), fakeClock, func(c aws.Config) iamjoin.OrganizationsAPI {
+		clientGetter, err := awsOrganizationsClientGetter(t.Context(), fakeClock, func(c aws.Config) iamjoin.OrganizationsAPI {
 			return mockOrganizationsAPI
 		})
 		require.NoError(t, err)
 
-		organizationsAPI, err := clientGetter.Get(t.Context())
+		const noIntegration = ""
+		organizationsAPI, err := clientGetter.Get(t.Context(), noIntegration, nil)
 		require.NoError(t, err)
 
 		describeAccountAPIOutput, err := organizationsAPI.DescribeAccount(t.Context(), &organizations.DescribeAccountInput{
