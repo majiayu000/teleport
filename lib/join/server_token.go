@@ -17,6 +17,8 @@
 package join
 
 import (
+	"crypto/subtle"
+
 	"github.com/gravitational/trace"
 
 	"github.com/gravitational/teleport/lib/join/internal/authz"
@@ -41,7 +43,7 @@ func (s *Server) handleTokenJoin(
 
 	// verify the secret provided in TokenInit for token's that have a secret
 	if tokenSecret, tokenHasSecret := token.GetSecret(); tokenHasSecret {
-		if tokenSecret != tokenInit.Secret {
+		if subtle.ConstantTimeCompare([]byte(tokenSecret), []byte(tokenInit.Secret)) != 1 {
 			return nil, trace.BadParameter("invalid token secret")
 		}
 	}
