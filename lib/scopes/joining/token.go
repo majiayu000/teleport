@@ -57,10 +57,6 @@ func StrongValidateToken(token *joiningv1.ScopedToken) error {
 		return trace.BadParameter("scoped token must have a scope assigned")
 	}
 
-	if token.GetStatus().GetSecret() == "" {
-		return trace.BadParameter("secret value must be defined for a scoped token")
-	}
-
 	spec := token.GetSpec()
 	if spec == nil {
 		return trace.BadParameter("spec must not be nil")
@@ -80,6 +76,10 @@ func StrongValidateToken(token *joiningv1.ScopedToken) error {
 
 	if _, ok := joinMethodsSupportingScopes[spec.JoinMethod]; !ok {
 		return trace.BadParameter("join method %q does not support scoping", spec.JoinMethod)
+	}
+
+	if token.GetStatus().GetSecret() == "" && types.JoinMethod(spec.JoinMethod) == types.JoinMethodToken {
+		return trace.BadParameter("secret value must be defined for a scoped token when using the token join method")
 	}
 
 	if len(spec.Roles) == 0 {

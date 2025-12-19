@@ -351,7 +351,7 @@ func TestValidateScopedToken(t *testing.T) {
 			expectedStrongErr: fmt.Sprintf("role %q does not support scoping", types.RoleInstance),
 		},
 		{
-			name: "no secret",
+			name: "no secret with token join method",
 			token: &joiningv1.ScopedToken{
 				Kind:    types.KindScopedToken,
 				Scope:   "/aa/bb",
@@ -367,6 +367,8 @@ func TestValidateScopedToken(t *testing.T) {
 			},
 			expectedStrongErr: "secret value must be defined for a scoped token",
 		},
+		// TODO (eriktate): add a test case for a missing secret with non-token join method once scoped
+		// tokens support other join methods
 		{
 			name: "valid scoped token",
 			token: &joiningv1.ScopedToken{
