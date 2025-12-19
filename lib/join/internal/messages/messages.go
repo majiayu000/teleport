@@ -100,7 +100,8 @@ type TokenInit struct {
 
 	// ClientParams holds parameters for the specific type of client trying to join.
 	ClientParams ClientParams
-	// Secret holds the token secret required to satisfy the join challenge.
+	// Secret holds the token secret required when using the token join method with
+	// a scoped token.
 	Secret string
 }
 

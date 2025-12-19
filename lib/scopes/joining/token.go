@@ -245,6 +245,6 @@ func (t *Token) GetAWSIIDTTL() types.Duration {
 }
 
 // GetSecret returns the token's secret value.
-func (t *Token) GetSecret() string {
-	return t.scoped.GetStatus().GetSecret()
+func (t *Token) GetSecret() (string, bool) {
+	return t.scoped.GetStatus().GetSecret(), t.GetJoinMethod() == types.JoinMethodToken
 }

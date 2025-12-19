@@ -39,9 +39,11 @@ func (s *Server) handleTokenJoin(
 	// Set any diagnostic info from the ClientParams.
 	setDiagnosticClientParams(stream.Diagnostic(), &tokenInit.ClientParams)
 
-	// make sure the secret provided in the TokenInit matches the token's secret
-	if tokenInit.Secret != token.GetSecret() {
-		return nil, trace.BadParameter("invalid token secret")
+	// verify the secret provided in TokenInit for token's that have a secret
+	if tokenSecret, tokenHasSecret := token.GetSecret(); tokenHasSecret {
+		if tokenSecret != tokenInit.Secret {
+			return nil, trace.BadParameter("invalid token secret")
+		}
 	}
 
 	result, err := s.makeResult(

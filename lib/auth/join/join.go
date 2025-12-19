@@ -135,7 +135,7 @@ type BoundKeypairParams struct {
 type RegisterParams struct {
 	// Token is the name of a secure token to join the cluster
 	Token string
-	// TokenSecret is the secret value required when using the token join method.
+	// TokenSecret is the secret value required when using the token join method with a scoped token.
 	TokenSecret string
 	// ID is identity ID
 	ID state.IdentityID
