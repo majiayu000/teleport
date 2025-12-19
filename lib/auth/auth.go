@@ -909,7 +909,7 @@ func awsOrganizationsClientUsingAmbientCredentials(ctx context.Context, clock cl
 	// Adding a cache layer for the DescribeAccount calls allows us to avoid being rate limited when thousands of EC2 instances try to join at once.
 	describeAccountAPICache, err := utils.NewFnCache(utils.FnCacheConfig{
 		// Organizations data doesn't change often, so we can cache it for a long period.
-		TTL:     1 * time.Minute,
+		TTL:     5 * time.Minute,
 		Clock:   clock,
 		Context: ctx,
 	})

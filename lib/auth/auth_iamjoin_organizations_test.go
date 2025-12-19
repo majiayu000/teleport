@@ -83,7 +83,7 @@ func TestAWSOrganizationsClientUsingAmbientCredentials(t *testing.T) {
 		require.Equal(t, 1, mockOrganizationsAPI.numberOfRemoteAPICalls, "expected no additional remote API calls due to caching")
 
 		// However, after the cache expiration time, a new call should be made.
-		fakeClock.Advance(5 * time.Minute)
+		fakeClock.Advance(10 * time.Minute)
 		describeAccountAPIOutput, err = organizationsAPI.DescribeAccount(t.Context(), &organizations.DescribeAccountInput{
 			AccountId: aws.String("123456789012"),
 		})
