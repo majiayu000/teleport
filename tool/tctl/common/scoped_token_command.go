@@ -186,12 +186,14 @@ func (c *ScopedTokensCommand) Add(ctx context.Context, client *authclient.Client
 	}
 
 	tokenName = tok.GetMetadata().GetName()
+	tokenSecret := tok.GetStatus().GetSecret()
 	// Print token information formatted with JSON, YAML, or just print the raw token.
 	switch c.format {
 	case teleport.JSON, teleport.YAML:
 		expires := time.Now().Add(c.ttl)
 		tokenInfo := map[string]any{
 			"token":        tokenName,
+			"token_secret": tokenSecret,
 			"roles":        roles,
 			"scope":        tok.GetScope(),
 			"assign_scope": tok.GetSpec().GetAssignedScope(),
@@ -219,11 +221,12 @@ func (c *ScopedTokensCommand) Add(ctx context.Context, client *authclient.Client
 	}
 
 	return trace.Wrap(showJoinInstructions(ctx, joinInstructionsInput{
-		out:       c.Stdout,
-		ttl:       c.ttl,
-		roles:     roles,
-		tokenName: tokenName,
-		client:    client,
+		out:         c.Stdout,
+		ttl:         c.ttl,
+		roles:       roles,
+		tokenName:   tokenName,
+		tokenSecret: tokenSecret,
+		client:      client,
 	}))
 }
 
