@@ -108,8 +108,8 @@ remain at the login screen even though the smart card was detected.
 **Solution:** Ensure that group policy allows specifying credentials during
 RDP connection establishment.
 
-Expand Computer Configuration, Administrative Templates, Windows Components,
-Remote Desktop Services, and Remote Desktop Session Host.
+Expand **Computer Configuration** > **Administrative Templates** > **Windows
+Components** > **Remote Desktop Services** > **Remote Desktop Session Host**.
 
 Under Remote Desktop Session Host, select **Security**.
 
@@ -147,9 +147,10 @@ isn't supported for your account."** or similar.
 The Security-Kerberos Windows Event Log provides information on smart card-based
 authentication attempts. This Event Log is not enabled by default.
 
-Open the Windows Event Log and navigate to Event Viewer, Application and Services Logs,
-Microsoft, Windows, Security-Kerberos, Operational. Enable this Event Log and attempt
-to connect with Teleport to review log entries.
+Open the Windows Event Log and navigate to **Event Viewer** > **Application and
+Services Logs** > **Microsoft** > **Windows** > **Security-Kerberos** >
+**Operational**. Enable this Event Log and attempt to connect with Teleport to
+review log entries.
 
 This is often an issue with the KDC certificates on your domain controllers not meeting
 the requirements for smart card logon.
@@ -173,9 +174,10 @@ by the domain controller.
 The Microsoft Crypto API (CAPI) service logs contain information about certificate
 checks performed by domain controllers. This Event Log is not enabled by default.
 
-Open the Windows Event Log and navigate to Event Viewer, Application and
-Services Logs, Microsoft, Windows, CAPI2, Operational. Enable this Event Log and
-attempt to connect with Teleport to review log entries.
+Open the Windows Event Log and navigate to **Event Viewer** > **Application and
+Services Logs** > **Microsoft** > **Windows** > **CAPI2** > **Operational**.
+Enable this Event Log and attempt to connect with Teleport to review log
+entries.
 
 Note: The CAPI2 logs can be very verbose. We recommend increasing the max log size to
 at least 4MB and disabling the logs when you complete troubleshooting.
@@ -215,11 +217,10 @@ the new CA.
 
 ### Host unreachable
 
-You click **Connect** on a Windows host from the Teleport Web UI, and a new tab opens, but
-nothing is displayed other than the top bar. After a while, an error is displayed about a
-failed connection.
-In most case, this error occurs when the `windows_desktop_service` can't reach the target
-Windows host.
+You click **Connect** on a Windows host from the Teleport Web UI, and a new tab
+opens, but nothing is displayed other than the top bar. After a while, an error
+is displayed about a failed connection. In most case, this error occurs when the
+`windows_desktop_service` can't reach the target Windows host.
 
 **Solution:** Modify firewall rules to allow inbound RDP traffic
 
@@ -523,9 +524,10 @@ to force the policy update:
 $ gpupdate.exe /force
 ```
 
-To enable NLA with Teleport 16.2.0 and later, set the `TELEPORT_ENABLE_RDP_NLA`
-environment variable to `yes` on hosts running Teleport's `windows_desktop_service`.
-More information on Teleport's NLA support is available in the [Active Directory guide](./active-directory.mdx#network-level-authentication-nla).
+To enable NLA set the `TELEPORT_ENABLE_RDP_NLA` environment variable to `yes` on
+hosts running Teleport's `windows_desktop_service`. More information on
+Teleport's NLA support is available in the [Active Directory
+guide](./active-directory.mdx#network-level-authentication-nla).
 
 ### CredSSP: server not found in Kerberos database
 
@@ -565,10 +567,12 @@ Controller will cache the failed retrieval for 35 minutes.
 
 **Solution:** Decrease the Domain Controller's timeouts in Certificate Path Validation Settings Properties
 
-Setting **Default URL retrieval timeout** and **Default path validation cumulative retrieval timeout** to less than that
-of Teleport's LDAP request timeout will fix this issue. These settings can be found in the Local Group Policy in Computer
-Configuration > Windows Settings > Security Settings > Public Key Policies > Certificate Path Validation Settings Properties
-then under the Network Retrieval tab.
+Setting **Default URL retrieval timeout** and **Default path validation
+cumulative retrieval timeout** to less than that of Teleport's LDAP request
+timeout will fix this issue. These settings can be found in the Local Group
+Policy in **Computer Configuration** > **Windows Settings** > **Security
+Settings** > **Public Key Policies** > **Certificate Path Validation Settings**
+under the **Network Retrieval** tab.
 
 ## Directory Sharing
 
@@ -586,11 +590,10 @@ Teleport's directory sharing feature leverages RDP device redirection.
 If device redirection is not enabled or allowed by the RDP server then the operation
 will fail.
 
-Device redirection is typically enabled by default, but may be disabled in group policy.
-The relevant settings are located under:
-
-```text
-Computer configuration > Administrative Templates > Windows Components > Remote Desktop Services > Remote Desktop Session Host > Device and Resource Redirection
-```
+Device redirection is typically enabled by default, but may be disabled in group
+policy. The relevant settings are located under **Computer configuration** >
+**Administrative Templates** > **Windows Components** > **Remote Desktop
+Services** > **Remote Desktop Session Host** > **Device and Resource
+Redirection**.
 
 Make sure that the option for *Do not allow drive redirection* is unset or disabled.
