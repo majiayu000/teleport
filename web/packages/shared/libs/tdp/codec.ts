@@ -16,12 +16,18 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-import { arrayBufferToBase64 } from 'shared/utils/base64';
-import * as tdpb from 'gen-proto-ts/teleport/desktop/v1/tdpb_pb'
-import { IMessageType, readMessageOption } from "@protobuf-ts/runtime";
+
 import { AuthenticateResponse, SSOChallenge } from 'gen-proto-ts/teleport/mfa/v1/challenge_pb';
 import { MfaAuthenticateChallengeJson, SsoChallenge as mfaSsoChallenge, MfaChallengeResponse } from 'teleport/services/mfa';
-import { base64urlToBuffer } from 'shared/utils/base64';
+import { base64urlToBuffer, arrayBufferToBase64 } from 'shared/utils/base64';
+import {
+  Envelope,
+  MFA,
+  SharedDirectoryResponse,
+  FileSystemObject as tdpbFileSystemObject,
+  ClientHello as tdpbClientHello,
+  SharedDirectoryRequest
+} from 'gen-proto-ts/teleport/desktop/v1/tdpb_pb'
 
 export type Message = ArrayBufferLike;
 
@@ -447,6 +453,15 @@ export interface ClientEventHandlers {
   handleMouseMove(move: MouseMove): void;
 }
 
+type OneofWithValue<T extends { oneofKind?: string }> =
+  Exclude<T, { oneofKind: undefined }>;
+
+  function hasOneof<T extends { oneofKind?: string }>(
+    value: T
+  ): value is OneofWithValue<T> {
+    return value.oneofKind !== undefined;
+  }
+
 export class TdpbCodec extends Encoder {
   encoder = new window.TextEncoder();
   decoder = new window.TextDecoder();
@@ -456,51 +471,77 @@ export class TdpbCodec extends Encoder {
     return `data:image/png;base64,${arrayBufferToBase64(buffer.slice(offset))}`;
   }
 
-  protected marshal<T extends object>(data: T, type: IMessageType<T>): Message {
-    const marshalledMessage = type.toBinary(data);
-    let opt = readMessageOption(type, "teleport.desktop.v1.tdp_type_option")?.toString();
-    if (opt === undefined) {
-      // TDP type option was not found for this message type
-      throw new Error(`attempt to marshal unknown/unsupported message ${type.typeName}`);
-    }
-    // This seems like a bug in code generation. Our 'MessageType' (proto) enum has values:
-    // MESSAGE_TYPE_FOO, MESSAGE_TYPE_BAR, etc. The message type option contains the full
-    // 'MESSAGE_TYPE_' prefix, but the generated enums drop this prefix. In order to convert
-    // our option to a message type, we have to trim the string.
-    const prefix = "MESSAGE_TYPE_";
-    if (opt.startsWith(prefix)) {
-      opt = opt.substring(prefix.length);
-    }
-
-    const messageType: tdpb.MessageType = tdpb.MessageType[opt];
-    return this.prependWireHeader(marshalledMessage, messageType)
-  }
-
-  private prependWireHeader(message: Uint8Array, type: tdpb.MessageType): Message {
-    const len = message.byteLength;
-    let buf = new Uint8Array(len + 8);
+  protected marshal(msg: Envelope["payload"]): Message {
+    const marshalledMessage = Envelope.toBinary({payload: msg});
+    const len = marshalledMessage.byteLength;
+    let buf = new Uint8Array(len + 4);
     let outbuf = new DataView(buf.buffer);
-    outbuf.setUint32(0, type, false)
-    outbuf.setUint32(4, len, false)
-
-    buf.set(message, 8);
+    outbuf.setUint32(0, len, false)
+    buf.set(marshalledMessage, 4);
     return buf.buffer
   }
 
-  async processMessage(buffer: ArrayBufferLike) {
-    const buf = new DataView(buffer);
-    const messageType = buf.getUint32(0, false);
-    const messageLength = buf.getUint32(4, false);
-    const messageData = new Uint8Array(buf.buffer.slice(8, 8 + messageLength));
+  private async processSharedDirectoryRequest(completionId: number, directoryId: number, op: SharedDirectoryRequest["operation"]): Promise<void> {
+    // Exclude 'oneOfKind: undefined'
+    // Possibly due to 'strictNullChecks' being disabled, the compiler can't seem to narrow
+    // the descriminated union using control flow analysis alone.
+    if (!hasOneof(op)) {
+      return
+    }
 
-    switch (messageType) {
-      case tdpb.MessageType.SERVER_HELLO:
+    switch (op.oneofKind) {
+      case "create":
+        await this.handlers.handleSharedDirectoryCreateRequest({directoryId, completionId, ...op.create})
+        break;
+      case "delete":
+        await this.handlers.handleSharedDirectoryDeleteRequest({directoryId, completionId, ...op.delete});
+        break;
+      case "info":
+        await this.handlers.handleSharedDirectoryInfoRequest({directoryId, completionId, ...op.info});
+        break;
+      case "list":
+        await this.handlers.handleSharedDirectoryListRequest({directoryId, completionId, ...op.list});
+        break;        
+      case "move":
+        this.handlers.handleSharedDirectoryMoveRequest({directoryId, completionId,
+          originalPathLength: op.move.originalPath.length, 
+          newPathLength: op.move.newPath.length,
+          ...op.move});
+        break;
+      case "read":
+        await this.handlers.handleSharedDirectoryReadRequest({directoryId, completionId,
+          pathLength: op.read.path.length,
+          ...op.read});
+        break;
+      case "truncate":
+        await this.handlers.handleSharedDirectoryTruncateRequest({directoryId, completionId, ...op.truncate});
+        break;
+      case "write":
+        await this.handlers.handleSharedDirectoryWriteRequest({directoryId, completionId,
+          pathLength: op.write.path.length,
+          writeData: op.write.data,
+          ...op.write});
+        break;
+      default:
+        console.warn("received unsupported shared directory request") 
+    }
+  }
+
+  async processMessage(buffer: ArrayBufferLike) {
+    // Note: TDPB messages are prefixed with a single big endian uint32 containing their length
+    // to act as a simple framing mechanism. This client connects via a websocket which makes this
+    // framing header redundant. Still, to avoid leaking TDPB details to the client implementation,
+    // we'll quietly discard that header here.
+    const envelope = Envelope.fromBinary(new Uint8Array(buffer, 4 /* ignore TDPB header */));
+
+    switch (envelope.payload.oneofKind) {
+      case "serverHello":
         this.handlers.handleRdpConnectionActivated(
-          tdpb.ServerHello.fromBinary(messageData).activationSpec
+          envelope.payload.serverHello.activationSpec
         );
         break;
-      case tdpb.MessageType.PNG_FRAME:
-        const frame = tdpb.PNGFrame.fromBinary(messageData);
+      case "pngFrame":
+        const frame = envelope.payload.pngFrame;
         let data = new Image()
         data.src = this.asBase64Url(frame.data.buffer, 0);
         let png = {
@@ -515,21 +556,21 @@ export class TdpbCodec extends Encoder {
           (frame: PngFrame) => this.handlers.handlePngFrame(frame);
         data.onload = load(png);
         break;
-      case tdpb.MessageType.FASTPATH_PDU:
+      case "fastPathPdu":
         this.handlers.handleRdpFastPathPdu(
-          tdpb.FastPathPDU.fromBinary(messageData).pdu
+          envelope.payload.fastPathPdu.pdu
         );
         break;
-      case tdpb.MessageType.ALERT:
-        let { message, severity } = tdpb.Alert.fromBinary(messageData);
+      case "alert":
+        let { message, severity } = envelope.payload.alert;
         this.handlers.handleTdpAlert({ message, severity: severity.valueOf() -1})
         break;
-      case tdpb.MessageType.CLIPBOARD_DATA:
-        const clipboardData = tdpb.ClipboardData.fromBinary(messageData).data;
+      case "clipboardData":
+        const clipboardData = envelope.payload.clipboardData.data;
         this.handlers.handleClipboardData({ data: this.decoder.decode(clipboardData) });
         break;
-      case tdpb.MessageType.MFA:
-        const mfa = tdpb.MFA.fromBinary(messageData);
+      case "mfa":
+        const mfa = envelope.payload.mfa;
         let challenge: MfaAuthenticateChallengeJson | undefined;
 
         if (mfa.challenge) {
@@ -560,70 +601,21 @@ export class TdpbCodec extends Encoder {
           this.handlers.handleMfaChallenge({ mfaType: 'n', jsonString: JSON.stringify(challenge) })
         }
         break;
-      case tdpb.MessageType.SHARED_DIRECTORY_ACKNOWLEDGE:
+      case "sharedDirectoryAcknowledge":
         {
-          const { errorCode: errCode, directoryId } = tdpb.SharedDirectoryAcknowledge.fromBinary(messageData);
+          const { errorCode: errCode, directoryId } = envelope.payload.sharedDirectoryAcknowledge;
           this.handlers.handleSharedDirectoryAcknowledge({ errCode, directoryId });
         }
         break;
-      case tdpb.MessageType.SHARED_DIRECTORY_REQUEST:
-        const req = tdpb.SharedDirectoryRequest.fromBinary(messageData);
-        switch (req.operationCode) {
-          case tdpb.DirectoryOperation.CREATE:
-            await this.handlers.handleSharedDirectoryCreateRequest(req);
-            break;
-          case tdpb.DirectoryOperation.DELETE:
-            await this.handlers.handleSharedDirectoryDeleteRequest(req);
-            break;
-          case tdpb.DirectoryOperation.MOVE:
-            this.handlers.handleSharedDirectoryMoveRequest({
-              completionId: req.completionId,
-              directoryId: req.directoryId,
-              originalPathLength: req.path.length,
-              originalPath: req.path,
-              newPathLength: req.newPath.length,
-              newPath: req.newPath,
-            });
-            break;
-          case tdpb.DirectoryOperation.INFO:
-            await this.handlers.handleSharedDirectoryInfoRequest(req);
-            break;
-          case tdpb.DirectoryOperation.TRUNCATE:
-            await this.handlers.handleSharedDirectoryTruncateRequest(req);
-            break;
-          case tdpb.DirectoryOperation.READ:
-            await this.handlers.handleSharedDirectoryReadRequest({
-              completionId: req.completionId,
-              directoryId: req.directoryId,
-              path: req.path,
-              pathLength: req.path.length,
-              length: req.length,
-              offset: req.offset,
-            });
-            break;
-          case tdpb.DirectoryOperation.WRITE:
-            await this.handlers.handleSharedDirectoryWriteRequest({
-              completionId: req.completionId,
-              directoryId: req.directoryId,
-              pathLength: req.path.length,
-              path: req.path,
-              offset: req.offset,
-              writeData: req.data,
-            });
-            break;
-          case tdpb.DirectoryOperation.LIST:
-            await this.handlers.handleSharedDirectoryListRequest(req);
-            break;
-          default:
-            console.warn(`received unsupported message type", ${messageType}`)
-        }
+      case "sharedDirectoryRequest":
+        await this.processSharedDirectoryRequest(envelope.payload.sharedDirectoryRequest.completionId, envelope.payload.sharedDirectoryRequest.directoryId, envelope.payload.sharedDirectoryRequest.operation)        
         break;
-      case tdpb.MessageType.LATENCY_STATS:
-        const stats = tdpb.LatencyStats.fromBinary(messageData);
+      case "latencyStats":
+        const stats = envelope.payload.latencyStats;
         this.handlers.handleLatencyStats({ client: stats.clientLatencyMs, server: stats.serverLatencyMs });
         break;
       default:
-        console.warn(`received unsupported message type", ${messageType}`)
+        console.warn(`received unsupported message type", ${envelope.payload.oneofKind}`)
     }
   }
 
@@ -649,28 +641,20 @@ export class TdpbCodec extends Encoder {
       }
     }
   }
-
-  decodeServerHello(buffer: ArrayBufferLike): ServerHello {
-    const hello = tdpb.ServerHello.fromBinary(new Uint8Array(buffer));
-    return {
-      clipboardSupport: true,
-      activationEvent: hello.activationSpec,
-    }
-  }
-
+  
   encodeClientScreenSpec(spec: ClientScreenSpec): Message {
-    return this.marshal(spec, tdpb.ClientScreenSpec)
+    return this.marshal({oneofKind: "clientScreenSpec", clientScreenSpec: spec})
   }
 
   encodeRdpResponsePdu(response: ArrayBufferLike): Message {
-    return this.marshal({ response: new Uint8Array(response) }, tdpb.RDPResponsePDU)
+    return this.marshal({oneofKind: "rdpResponsePdu", rdpResponsePdu: {response: new Uint8Array(response)} })
   }
 
   encodeMouseMove(x: number, y: number): Message {
-    return this.marshal({ x, y }, tdpb.MouseMove)
+    return this.marshal({oneofKind: "mouseMove", mouseMove: { x, y }})
   }
   encodeMouseButton(button: MouseButton, state: ButtonState): Message {
-    return this.marshal({ button: button + 1, pressed: state == ButtonState.DOWN }, tdpb.MouseButton)
+    return this.marshal({oneofKind: "mouseButton", mouseButton: { button: button + 1, pressed: state == ButtonState.DOWN }})
   }
 
   encodeKeyboardInput(code: string, state: ButtonState): Message[] {
@@ -684,24 +668,24 @@ export class TdpbCodec extends Encoder {
   }
 
   private encodeScancode(scancode: number, state: ButtonState): Message {
-    return this.marshal({ keyCode: scancode, pressed: state == ButtonState.DOWN }, tdpb.KeyboardButton)
+    return this.marshal({oneofKind: "keyboardButton", keyboardButton: { keyCode: scancode, pressed: state == ButtonState.DOWN }})
   }
 
   encodeSyncKeys(syncKeys: SyncKeys): Message {
-    return this.marshal({
+    return this.marshal({oneofKind: "syncKeys", syncKeys: {
       scrollLockPressed: syncKeys.scrollLockState == ButtonState.DOWN,
       numLockState: syncKeys.numLockState == ButtonState.DOWN,
       capsLockState: syncKeys.capsLockState == ButtonState.DOWN,
       kanaLockState: syncKeys.kanaLockState == ButtonState.DOWN
-    }, tdpb.SyncKeys);
+    }});
   }
 
   encodeClipboardData(clipboardData: ClipboardData) {
-    return this.marshal({ data: this.encoder.encode(clipboardData.data) }, tdpb.ClipboardData)
+    return this.marshal({oneofKind: "clipboardData", clipboardData: { data: this.encoder.encode(clipboardData.data) }})
   }
 
   encodeMouseWheelScroll(axis: ScrollAxis, delta: number): Message {
-    return this.marshal({ axis: axis.valueOf() - 1, delta }, tdpb.MouseWheel);
+    return this.marshal({oneofKind: "mouseWheel", mouseWheel: { axis: axis.valueOf() - 1, delta }});
   }
 
   encodeMfaJson(mfaJson: MfaChallengeResponse): Message {
@@ -727,7 +711,7 @@ export class TdpbCodec extends Encoder {
         }
       });
 
-      return this.marshal(tdpb.MFA.create({ authenticationResponse: response }), tdpb.MFA)
+      return this.marshal({oneofKind: "mfa", mfa: MFA.create({ authenticationResponse: response })})
     } else if (mfaJson.sso_response) {
       const response = AuthenticateResponse.create({
         name: "", response: {
@@ -735,87 +719,116 @@ export class TdpbCodec extends Encoder {
           sso: mfaJson.sso_response
         }
       });
-      return this.marshal(tdpb.MFA.create({ authenticationResponse: response }), tdpb.MFA)
+      return this.marshal({oneofKind: "mfa", mfa: MFA.create({ authenticationResponse: response })})
     }
 
     throw new Error("Invalid MFA response. Must be Webauthn or SSO")
   }
 
   encodeSharedDirectoryInfoResponse(res: SharedDirectoryInfoResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.INFO,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: res.completionId,
       errorCode: res.errCode,
-      fsoList: [res.fso],
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "info",
+        info: {fso: res.fso}
+      },
+    })});
   }
 
   encodeSharedDirectoryReadResponse(res: SharedDirectoryReadResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.READ,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: res.completionId,
       errorCode: res.errCode,
-      data: res.readData,
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "read",
+        read: {data: res.readData}
+      },
+    })});
   }
 
   encodeSharedDirectoryMoveResponse(res: SharedDirectoryMoveResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.MOVE,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: res.completionId,
       errorCode: res.errCode,
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "move",
+        move: {},
+      },
+    })});
   }
 
   encodeSharedDirectoryListResponse(res: SharedDirectoryListResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.LIST,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: res.completionId,
       errorCode: res.errCode,
-      fsoList: res.fsoList
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "list",
+        list: {
+          fsoList: res.fsoList,
+        },
+      },
+    })});
   }
 
 
   encodeSharedDirectoryAnnounce(announce: SharedDirectoryAnnounce): Message {
-    return this.marshal(announce, tdpb.SharedDirectoryAnnounce);
+    return this.marshal({oneofKind: "sharedDirectoryAnnounce", sharedDirectoryAnnounce: announce});
   }
 
   encodeSharedDirectoryCreateResponse(resp: SharedDirectoryCreateResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.CREATE,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: resp.completionId,
       errorCode: resp.errCode,
-      fsoList: new Array<tdpb.FileSystemObject>(resp.fso),
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "create",
+        create: {
+          fso: resp.fso,
+        },
+      },
+    })});
   }
 
   encodeSharedDirectoryDeleteResponse(resp: SharedDirectoryDeleteResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.DELETE,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: resp.completionId,
       errorCode: resp.errCode,
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "delete",
+        delete: {},
+      },
+    })});
   }
 
   encodeSharedDirectoryWriteResponse(resp: SharedDirectoryWriteResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({
-      operationCode: tdpb.DirectoryOperation.WRITE,
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({
       completionId: resp.completionId,
       errorCode: resp.errCode,
-      bytesWritten: resp.bytesWritten,
-    }), tdpb.SharedDirectoryResponse);
+      operation: {
+        oneofKind: "write",
+        write: {
+          bytesWritten: resp.bytesWritten
+        },
+      },
+    })});
   }
 
   encodeSharedDirectoryTruncateResponse(resp: SharedDirectoryTruncateResponse): Message {
-    return this.marshal(tdpb.SharedDirectoryResponse.create({ operationCode: tdpb.DirectoryOperation.TRUNCATE, ...resp }), tdpb.SharedDirectoryResponse);
+    return this.marshal({oneofKind: "sharedDirectoryResponse", sharedDirectoryResponse: SharedDirectoryResponse.create({ 
+      completionId: resp.completionId,
+      errorCode: resp.errCode,
+      operation: {
+        oneofKind: "truncate",
+        truncate: {},
+      },
+    })});
   }
 
   encodeClientHello(hello: ClientHello): Message {
-    return this.marshal(tdpb.ClientHello.create({
+    return this.marshal({oneofKind: "clientHello", clientHello: tdpbClientHello.create({
       screenSpec: hello.screenSpec,
       keyboardLayout: hello.keyboardLayout
-    }), tdpb.ClientHello);
+    })});
   }
 }
 
