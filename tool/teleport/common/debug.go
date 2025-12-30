@@ -46,6 +46,8 @@ type DebugClient interface {
 	CollectProfile(context.Context, string, int) ([]byte, error)
 	// GetReadiness checks if the instance is ready to serve requests.
 	GetReadiness(context.Context) (debugclient.Readiness, error)
+	// GetRawMetrics fetches the unprocessed Prometheus metrics.
+	GetRawMetrics(context.Context) ([]byte, error)
 	SocketPath() string
 }
 
@@ -193,6 +195,22 @@ func readyz(ctx context.Context, clt DebugClient) error {
 	}
 
 	fmt.Printf("ready (PID:%d)\n", readiness.PID)
+	return nil
+}
+
+// onMetrics fetches the current Prometheus metrics.
+func onMetrics(ctx context.Context, configPath string) error {
+	clt, dataDir, err := newDebugClient(configPath)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
+	metrics, err := clt.GetRawMetrics(ctx)
+	if err != nil {
+		return convertToReadableErr(err, dataDir, clt.SocketPath())
+	}
+
+	fmt.Print(string(metrics))
 	return nil
 }
 
