@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ type DebugClient interface {
 	// GetReadiness checks if the instance is ready to serve requests.
 	GetReadiness(context.Context) (debugclient.Readiness, error)
 	// GetRawMetrics fetches the unprocessed Prometheus metrics.
-	GetRawMetrics(context.Context) ([]byte, error)
+	GetRawMetrics(context.Context) (io.ReadCloser, error)
 	SocketPath() string
 }
 
@@ -209,8 +210,13 @@ func onMetrics(ctx context.Context, configPath string) error {
 	if err != nil {
 		return convertToReadableErr(err, dataDir, clt.SocketPath())
 	}
+	defer metrics.Close()
 
-	fmt.Print(string(metrics))
+	_, err = io.Copy(os.Stdout, metrics)
+	if err != nil {
+		return trace.Wrap(err)
+	}
+
 	return nil
 }
 

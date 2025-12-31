@@ -203,13 +203,12 @@ func (c *Client) GetMetrics(ctx context.Context) (map[string]*dto.MetricFamily, 
 }
 
 // GetRawMetrics returns unprocessed prometheus metrics from the /metrics endpoint.
-func (c *Client) GetRawMetrics(ctx context.Context) ([]byte, error) {
+func (c *Client) GetRawMetrics(ctx context.Context) (io.ReadCloser, error) {
 	resp, err := c.do(ctx, http.MethodGet, url.URL{Path: "/metrics"}, nil)
 	if err != nil {
 		return nil, trace.Wrap(err)
 	}
-	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return resp.Body, nil
 }
 
 func (c *Client) do(ctx context.Context, method string, u url.URL, body []byte) (*http.Response, error) {
